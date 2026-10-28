@@ -6,6 +6,7 @@ import { unzlibSync } from "fflate";
 import { EntityParser, type MediaType, parseMediaType, entityHeaderToString, parseMediaTypeFromString } from "./entity_parser";
 import * as wsApi from "./ws_api";
 import type { ComponentPMT, AdditionalAribBXMLInfo } from "./ws_api";
+import { parseAITSection, SectionAssembler } from "./ait";
 
 type DownloadComponentInfo = {
     componentId: number,
@@ -132,6 +133,10 @@ export function decodeTS(options: DecodeTSOptions) {
     let pcrPID: number | null = null;
     // 字幕/文字スーパーのPESのPID
     let privatePes = new Set<number>();
+    // AITを伝送している可能性のあるデータコンポーネント
+    let aitPids = new Map<number, { componentId: number | null, assembler: SectionAssembler }>();
+    const aitVersions = new Map<string, number>();
+    const eitPF: { present?: wsApi.EITEventInfo, following?: wsApi.EITEventInfo, key?: string } = {};
     let privatePesReaders = new Map<number, PESReader>();
 
     // ワンセグの場合0x1fc8-0x1fcfまでの固定PIDでPMTでワンセグのみを受信している場合PATは受信されない
@@ -189,6 +194,7 @@ export function decodeTS(options: DecodeTSOptions) {
         const ptc = new Map<number, ComponentPMT>();
         const ctp = new Map<number, ComponentPMT>();
         privatePes.clear();
+        const newAitPids = new Map<number, { componentId: number | null, assembler: SectionAssembler }>();
         for (const stream of section.streams) {
             if (parsePES && stream.streamType === 0x06) {
                 privatePes.add(stream.elementaryPID);
@@ -213,6 +219,29 @@ export function decodeTS(options: DecodeTSOptions) {
                     }
                 }
             }
+            // BML以外のデータ符号化方式でセクション伝送されるものはAITの可能性がある (STD-B24 第四編 7.3)
+            if ((stream.streamType === 0x05 || stream.streamType === 0x0d) && dataComponentId != null && bxmlInfo == null) {
+                const aitPid = pid;
+                const existing = aitPids.get(aitPid);
+                newAitPids.set(aitPid, existing ?? {
+                    componentId: componentId ?? null,
+                    assembler: new SectionAssembler((sec) => {
+                        if (sec[0] !== 0x74) {
+                            return;
+                        }
+                        const ait = parseAITSection(sec);
+                        if (ait == null) {
+                            return;
+                        }
+                        const key = `${aitPid}:${ait.applicationType}:${ait.sectionNumber}`;
+                        if (aitVersions.get(key) === ait.version) {
+                            return;
+                        }
+                        aitVersions.set(key, ait.version);
+                        send({ type: "ait", componentId: componentId ?? null, pid: aitPid, section: ait });
+                    }),
+                });
+            }
             if (componentId == null) {
                 continue;
             }
@@ -226,6 +255,7 @@ export function decodeTS(options: DecodeTSOptions) {
             ptc.set(pid, componentPMT);
             ctp.set(componentPMT.componentId, componentPMT);
         }
+        aitPids = newAitPids;
         updateProgramInfo({
             serviceId,
         });
@@ -247,6 +277,10 @@ export function decodeTS(options: DecodeTSOptions) {
     reader.addEventListener("packet", ({ packet }) => {
         if (packet.transportErrorIndicator) {
             return;
+        }
+        const ait = aitPids.get(packet.pid);
+        if (ait != null) {
+            ait.assembler.push(packet);
         }
         if (privatePes.has(packet.pid)) {
             const reader = privatePesReaders.get(packet.pid) ?? new PESReader();
@@ -350,6 +384,39 @@ export function decodeTS(options: DecodeTSOptions) {
         }
         if (section.tableId !== "EIT[p/f]" || section.other) { // 自TS, 現在/次のイベント情報
             return;
+        }
+        if (section.events.length === 1 && (section.sectionNumber === 0 || section.sectionNumber === 1)) {
+            const ev = section.events[0];
+            const se = ev.descriptors.find(x => x.tag === "shortEvent");
+            const info: wsApi.EITEventInfo = {
+                eventId: ev.eventId,
+                startTimeUnixMillis: ev.startTime == null ? null : mjdBCDToUnixEpoch(ev.startTime) * 1000,
+                durationSeconds: ev.duration == null ? null : bcdTimeToSeconds(ev.duration),
+                eventName: se == null ? null : decodeSIText(se.eventName),
+                eventText: se == null ? null : decodeSIText(se.text),
+            };
+            const key = `${section.originalNetworkId}.${section.transportStreamId}.${section.serviceId}`;
+            if (eitPF.key !== key) {
+                eitPF.present = undefined;
+                eitPF.following = undefined;
+                eitPF.key = key;
+            }
+            const prev = section.sectionNumber === 0 ? eitPF.present : eitPF.following;
+            if (prev == null || prev.eventId !== info.eventId || prev.eventName !== info.eventName || prev.eventText !== info.eventText || prev.startTimeUnixMillis !== info.startTimeUnixMillis || prev.durationSeconds !== info.durationSeconds) {
+                if (section.sectionNumber === 0) {
+                    eitPF.present = info;
+                } else {
+                    eitPF.following = info;
+                }
+                send({
+                    type: "eitPresentFollowing",
+                    originalNetworkId: section.originalNetworkId,
+                    transportStreamId: section.transportStreamId,
+                    serviceId: section.serviceId,
+                    present: eitPF.present,
+                    following: eitPF.following,
+                });
+            }
         }
         if (section.sectionNumber !== 0) { // 現在のイベント情報かどうか
             return;

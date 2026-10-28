@@ -884,6 +884,32 @@ export function defineBrowserBinding(context: Context, resources: Resources, bro
             return wrapArray(ctx, r);
         }, 1, "getResidentAppVersion"),
     });
+    browser.properties.set("startReceivingAIT", {
+        ...desc,
+        value: newNativeFunction(context.realm.intrinsics.FunctionPrototype, function* browser$startReceivingAIT(ctx, _self, args, caller) {
+            return browserAPI.browser.startReceivingAIT(args[0] === undefined ? undefined : yield* toString(ctx, args[0], caller));
+        }, 0, "startReceivingAIT"),
+    });
+    browser.properties.set("getReceivedAIT", {
+        ...desc,
+        value: newNativeFunction(context.realm.intrinsics.FunctionPrototype, function* browser$getReceivedAIT(ctx, _self, args, caller) {
+            const r = browserAPI.browser.getReceivedAIT(args[0] === undefined ? undefined : yield* toString(ctx, args[0], caller));
+            if (typeof r === "number") {
+                return r;
+            }
+            return wrapArray(ctx, r);
+        }, 0, "getReceivedAIT"),
+    });
+    browser.properties.set("startAITControlledApp", {
+        ...desc,
+        value: newNativeFunction(context.realm.intrinsics.FunctionPrototype, function* browser$startAITControlledApp(ctx, _self, args, caller) {
+            return browserAPI.browser.startAITControlledApp(
+                yield* toString(ctx, args[0], caller),
+                yield* toString(ctx, args[1], caller),
+                args[2] === undefined ? undefined : yield* toString(ctx, args[2], caller)
+            );
+        }, 2, "startAITControlledApp"),
+    });
     browser.properties.set("getLockedModuleInfo", {
         ...desc,
         value: newNativeFunction(context.realm.intrinsics.FunctionPrototype, function* browser$getLockedModuleInfo(ctx, _self, args, caller) {

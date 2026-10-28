@@ -123,6 +123,34 @@ export type ProgramInfoMessage = {
     networkId: number | null,
 };
 
+export type { AITSection, AITApplication, AITTransportProtocol, AITBoundaryAndPermission } from "./ait";
+
+export type EITEventInfo = {
+    eventId: number,
+    startTimeUnixMillis: number | null,
+    durationSeconds: number | null,
+    eventName: string | null,
+    eventText: string | null,
+};
+
+// EIT[p/f] 現在/次のイベント (Hybridcast getCurrentEventInformation用)
+export type EITPresentFollowingMessage = {
+    type: "eitPresentFollowing",
+    originalNetworkId: number,
+    transportStreamId: number,
+    serviceId: number,
+    present?: EITEventInfo,
+    following?: EITEventInfo,
+};
+
+// AIT (table_id=0x74)
+export type AITMessage = {
+    type: "ait",
+    componentId: number | null,
+    pid: number,
+    section: import("./ait").AITSection,
+};
+
 export type CurrentTime = {
     type: "currentTime",
     timeUnixMillis: number,
@@ -180,6 +208,8 @@ export type PESMessage = {
 };
 
 export type ResponseMessage = PMTMessage |
+    EITPresentFollowingMessage |
+    AITMessage |
     ModuleDownloadedMessage |
     ModuleListUpdatedMessage |
     ProgramInfoMessage |

@@ -111,6 +111,28 @@ export interface Reg {
     setReg(index: number, value: string): void;
 }
 
+/**
+ * STD-B24 第二編 7.6.20 AITコントロールドアプリケーション連携機能
+ * ait_uriがundefinedの場合は現在のサービスで伝送されるデフォルトのAIT
+ * activeDocumentは呼び出し元のBML文書 (文書スコープの管理用)
+ */
+export interface AITControlledApp {
+    startReceivingAIT(aitUri: string | undefined, activeDocument: string | null): number;
+    // 0: 未完了, -1: エラー, -2: 未指示, NaN: 失敗, Array: 成功
+    getReceivedAIT(aitUri: string | undefined, activeDocument: string | null): any[] | number;
+    startAITControlledApp(organizationId: string, applicationId: string, aitUri: string | undefined, activeDocument: string | null): number;
+}
+
+export interface BrowserExtension {
+    // undefinedを返すと既定の動作
+    getBrowserSupport?(sProvider: string, functionname: string, additionalinfoList: string[]): number | undefined;
+    getResidentAppVersion?(appName: string): any[] | null;
+    aitControlledApp?: AITControlledApp;
+    // 受信機固有識別子 (STD-B24 getIRDID)。type===5はB-CASカードID (16進12桁)
+    // nullを返すと既定の動作 (未指定)
+    getIRDID?(type: number): string | null;
+}
+
 export type KeyGroup = "basic" | "data-button" | "numeric-tuning" | "other-tuning"
     | "special-1" | "special-2" // Cプロファイル
     ;
@@ -206,6 +228,8 @@ export type BMLBrowserOptions = {
     greg?: Reg;
     setMainAudioStreamCallback?: (componentId: number, channelId?: number) => boolean;
     X_DPA_startResidentApp?: (appName: string, showAV: number, returnURI: string, Ex_info: string[]) => number;
+    // Hybridcast連携など
+    extension?: BrowserExtension;
     /**
      * エラーメッセージを表示
      * 未指定の時は<dialog>とshowModalが使われる
@@ -288,7 +312,7 @@ export class BMLBrowser {
             options.showErrorMessage,
             contentLogger,
         );
-        this.browserAPI = new BrowserAPI(this.resources, this.eventQueue, this.eventDispatcher, this.content, this.nvram, this.interpreter, audioNodeProvider, options.ip ?? {}, this.indicator, options.ureg, options.greg, options.X_DPA_startResidentApp, browserLogger);
+        this.browserAPI = new BrowserAPI(this.resources, this.eventQueue, this.eventDispatcher, this.content, this.nvram, this.interpreter, audioNodeProvider, options.ip ?? {}, this.indicator, options.ureg, options.greg, options.X_DPA_startResidentApp, browserLogger, options.extension);
         this.interpreter.setupEnvironment(this.browserAPI, this.resources, this.content, this.epg);
         if (options.fonts?.roundGothic) {
             this.fonts.push(new FontFace(bmlBrowserFontNames.roundGothic, options.fonts?.roundGothic.source, options.fonts?.roundGothic.descriptors));

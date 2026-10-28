@@ -6,7 +6,7 @@ import { EventDispatcher, EventQueue } from "./event_queue";
 import { Content } from "./content";
 import { ResponseMessage } from "../server/ws_api";
 import { playRomSound } from "./romsound";
-import { AudioNodeProvider, Indicator, IP, Reg } from "./bml_browser";
+import { AudioNodeProvider, Indicator, IP, Reg, BrowserExtension } from "./bml_browser";
 import { decodeEUCJP, encodeEUCJP, stripStringEUCJP } from "./euc_jp";
 import { decodeShiftJIS, encodeShiftJIS, stripStringShiftJIS } from "./shift_jis";
 import { type Logger } from "./util/logger";
@@ -136,6 +136,10 @@ export interface Browser {
     getLockedModuleInfo(): LockedModuleInfo[] | null;
     getBrowserStatus(sProvider: string, statusname: string, additionalinfo: string): number;
     getResidentAppVersion(appName: string): any[] | null;
+    // STD-B24 第二編 7.6.20 AITコントロールドアプリケーション連携機能
+    startReceivingAIT(ait_uri?: string): number;
+    getReceivedAIT(ait_uri?: string): any[] | number;
+    startAITControlledApp(organization_id: string, application_id: string, ait_uri?: string): number;
     isRootCertificateExisting(root_certificate_type: number, root_certificate_id: number, root_certificate_version?: number): number;
     getRootCertificateInfo(): any[] | null;
     // option
@@ -545,6 +549,7 @@ export class BrowserAPI {
     private readonly greg: Reg;
     private readonly X_DPA_startResidentApp?: (appName: string, showAV: number, returnURI: string, Ex_info: string[]) => number;
     private readonly logger: Logger;
+    private readonly extension: BrowserExtension;
 
     constructor(
         resources: resource.Resources,
@@ -560,7 +565,9 @@ export class BrowserAPI {
         greg: Reg | undefined,
         X_DPA_startResidentApp: ((appName: string, showAV: number, returnURI: string, Ex_info: string[]) => number) | undefined,
         logger: Logger,
+        extension?: BrowserExtension,
     ) {
+        this.extension = extension ?? {};
         this.resources = resources;
         this.eventQueue = eventQueue;
         this.eventDispatcher = eventDispatcher;
@@ -1014,6 +1021,10 @@ export class BrowserAPI {
         },
         getBrowserSupport: (sProvider: string, functionname: string, ...additionalinfoList: string[]): number => {
             this.logger.log(`${this.logger.prefix}getBrowserSupport`, sProvider, functionname, ...additionalinfoList);
+            const overridden = this.extension.getBrowserSupport?.(sProvider, functionname, additionalinfoList);
+            if (overridden != null) {
+                return overridden;
+            }
             const additionalinfo: string | undefined = additionalinfoList[0] ?? undefined;
             const additionalinfo2: string | undefined = additionalinfoList[1] ?? undefined;
             const additionalinfo3: string | undefined = additionalinfoList[2] ?? undefined;
@@ -1266,7 +1277,28 @@ export class BrowserAPI {
             // Cプロファイルでもこの関数は運用される
             // ただしappNameにComBrowserは指定しない (TR-B14 第三分冊 7.10.6)
             this.logger.log(`${this.logger.prefix}getResidentAppVersion`, appName);
-            return null;
+            return this.extension.getResidentAppVersion?.(appName) ?? null;
+        },
+        startReceivingAIT: (ait_uri?: string): number => {
+            this.logger.log(`${this.logger.prefix}startReceivingAIT`, ait_uri);
+            if (this.extension.aitControlledApp == null) {
+                return NaN;
+            }
+            return this.extension.aitControlledApp.startReceivingAIT(ait_uri, this.resources.activeDocument);
+        },
+        getReceivedAIT: (ait_uri?: string): any[] | number => {
+            this.logger.log(`${this.logger.prefix}getReceivedAIT`, ait_uri);
+            if (this.extension.aitControlledApp == null) {
+                return NaN;
+            }
+            return this.extension.aitControlledApp.getReceivedAIT(ait_uri, this.resources.activeDocument);
+        },
+        startAITControlledApp: (organization_id: string, application_id: string, ait_uri?: string): number => {
+            this.logger.log(`${this.logger.prefix}startAITControlledApp`, organization_id, application_id, ait_uri);
+            if (this.extension.aitControlledApp == null) {
+                return NaN;
+            }
+            return this.extension.aitControlledApp.startAITControlledApp(organization_id, application_id, ait_uri, this.resources.activeDocument);
         },
         getLockedModuleInfo: (): LockedModuleInfo[] | null => {
             this.logger.log(`${this.logger.prefix}getLockedModuleInfo`);
@@ -1335,13 +1367,10 @@ export class BrowserAPI {
         },
         getIRDID: (type: number): string | null => {
             this.logger.log(`${this.logger.prefix}getIRDID`, type);
-            if (type === 5) {
-                // 20桁のB-CAS番号のうち後ろ5桁のチェックサムを除去したもの
-                // const cardID = "000012345678901";
-                // 16進表記に変換 
-                // return BigInt(cardID.substring(0, 20 - 5)).toString(16).padStart(12, "0");
-            }
-            return null;
+            // type===5: B-CASカードID (16進12桁)
+            // 20桁のB-CAS番号の先頭15桁 (後ろ5桁のチェックサムを除いたもの) を16進表記したものと等しい
+            // 受信機が実際に挿入されているB-CASカードから読み取った値を返す
+            return this.extension.getIRDID?.(type) ?? null;
         },
         setISPParams: (ispname: string, tel: string, bProvider: boolean, uid: string, passwd: string, nameServer1: string, nameServer2: string, softCompression: boolean, headerCompression: boolean, idleTime: number, status: number, lineType?: number): number => {
             return NaN;
